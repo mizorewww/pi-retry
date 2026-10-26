@@ -40,9 +40,15 @@ jobs:
             echo "Publishing $PACKAGE_VERSION (npm has $NPM_VERSION)."
           fi
 
+      # NOTE: GitHub repos created after 2026-07-15 emit immutable OIDC subjects that
+      # npm's trusted publishing can't verify yet (npm/cli#9969). Until npm ships a fix,
+      # publish with a bypass-2FA granular token stored as NPM_TOKEN. Provenance still
+      # signs via OIDC, and the trusted publisher connection stays configured on npm.
       - name: Publish to npm
         if: steps.version.outputs.changed == 'true'
         run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub release
         if: steps.version.outputs.changed == 'true'
