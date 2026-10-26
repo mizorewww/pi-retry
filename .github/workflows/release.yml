@@ -7,7 +7,10 @@ on:
 
 permissions:
   contents: write
-  id-token: write
+  # id-token: write intentionally omitted: repos created after 2026-07-15 emit
+  # immutable OIDC subjects that npm's trusted publishing rejects (npm/cli#9969).
+  # While present, npm prefers OIDC over NODE_AUTH_TOKEN and the publish fails
+  # 403 "OIDC permission denied". Re-add id-token + --provenance once npm fixes it.
 
 jobs:
   release:
@@ -40,13 +43,9 @@ jobs:
             echo "Publishing $PACKAGE_VERSION (npm has $NPM_VERSION)."
           fi
 
-      # NOTE: GitHub repos created after 2026-07-15 emit immutable OIDC subjects that
-      # npm's trusted publishing can't verify yet (npm/cli#9969). Until npm ships a fix,
-      # publish with a bypass-2FA granular token stored as NPM_TOKEN. Provenance still
-      # signs via OIDC, and the trusted publisher connection stays configured on npm.
       - name: Publish to npm
         if: steps.version.outputs.changed == 'true'
-        run: npm publish --provenance --access public
+        run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
