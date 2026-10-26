@@ -1,6 +1,6 @@
 {
-  "name": "@georgebashi/pi-retry",
-  "version": "0.1.1",
+  "name": "@aac6fef/pi-retry",
+  "version": "0.2.0",
   "description": "pi extension: auto-retry transient streaming errors + /retry command",
   "keywords": [
     "pi-package",
@@ -9,10 +9,10 @@
     "error-handling"
   ],
   "license": "MIT",
-  "author": "George Bashi <george@bashi.co.uk>",
+  "author": "aac6fef",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/georgebashi/pi-retry.git"
+    "url": "git+https://github.com/mizorewww/pi-retry.git"
   },
   "type": "module",
   "files": [
@@ -26,6 +26,6 @@
     ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": ">=1.0.0"
   }
 }
