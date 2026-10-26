@@ -1,42 +1,20 @@
 # pi-retry
 
-A [pi](https://github.com/badlogic/pi) extension that retries failed LLM responses — automatically for transient streaming errors, manually via `/retry` or just pressing Enter.
+A [pi](https://github.com/earendil-works/pi) extension that retries failed LLM responses — automatically for transient `aborted` streaming errors, manually via `/retry` or `alt+r`.
+
+Minimal rewrite of [pi-retry](https://github.com/georgebashi/pi-retry) (~45 lines) built on pi's `agent_before_settle` boundary API.
 
 ## Features
 
-### Auto-retry transient errors
-
-When an LLM response fails with a transient streaming error (e.g. `"aborted"` from an upstream proxy/gateway), the extension automatically retries with exponential backoff:
-
-- **Delays:** 2s → 4s → 8s
-- **Max attempts:** 3
-- **No history pollution:** The failed response is invisible to the model (pi's `transform-messages` strips aborted/errored assistant messages). The retry trigger uses `display: false` so it's hidden in the TUI.
-
-Only errors *not* already handled by pi's built-in retry are retried (overloaded, rate limit, 429, 5xx, etc. are left to pi). User-initiated aborts (ESC) are never auto-retried — use `/retry` or Enter for those.
-
-### Manual retry: `/retry`
-
-Type `/retry` after any error or abort to re-invoke the LLM. The model starts fresh from the last user message — it never sees the failed partial response.
-
-### Manual retry: press Enter
-
-After an error or user-initiated abort (ESC), just press Enter on an empty editor to retry. This is the fastest path for the common "oops, I shouldn't have cancelled" scenario.
-
-This works by intercepting raw terminal input via pi's `onTerminalInput` hook. The Enter keypress is consumed only when all of these are true:
-
-- The editor is empty
-- The editor has focus (no modal/selector/overlay is open)
-- The agent is idle
-- The last response was an error or abort
-
-Otherwise Enter behaves normally — including when a model selector, confirm dialog, session picker, or any other modal UI is displayed.
+- **Auto-retry**: when a run settles with an error whose message contains `aborted` (e.g. an upstream proxy/gateway killing the stream), pi commits a hidden `custom_message` entry and continues for one more turn — up to 3 attempts. The retry runs *after* pi's own retry/compaction decisions, so it never double-retries errors pi already handles (rate limits, 5xx, etc.).
+- **`/retry` command**: re-invoke the LLM after any errored or aborted response, including ESC cancellations.
+- **`alt+r`**: same as `/retry`, bound as an editor shortcut — it only fires while the editor has input focus, so modal dialogs and selectors are unaffected.
+- State is tracked per session and resets on `session_start`.
 
 ## Installation
 
-### As a pi package (recommended)
-
 ```bash
-pi install npm:@georgebashi/pi-retry
+pi install npm:@aac6fef/pi-retry
 ```
 
 Or from a local checkout:
@@ -45,31 +23,19 @@ Or from a local checkout:
 pi install /path/to/pi-retry
 ```
 
-### For development/testing
-
-```bash
-pi -e /path/to/pi-retry/index.ts
-```
-
-## Logging
-
-Every retry attempt is logged to `~/.pi/logs/pi-retry.jsonl` with:
-
-- Provider, model, model ID, API type, thinking level
-- Stop reason and error message
-- Attempt number and delay
-- Working directory and session ID
-
-Event types: `retry`, `retry_succeeded`, `retry_exhausted`, `manual_retry`.
-
 ## How it works
 
-1. **`agent_end` event** — Checks if the last assistant message has a retryable error. If so, waits with backoff and sends a hidden `sendMessage` with `triggerTurn: true`.
+`agent_before_settle` fires once a run is about to settle, after pi's own recovery has run its course. If `outcome` is `"error"` and the last assistant message's `errorMessage` matches `/aborted/i`, the handler returns:
 
-2. **`context` event** — Strips the hidden retry trigger message before the LLM sees it. The aborted assistant message is already stripped by pi's `transform-messages`.
+```ts
+{ entries: [{ type: "custom_message", customType: "pi-retry", content: "…try again.", display: false }], continue: true }
+```
 
-3. **`onTerminalInput` hook** — Intercepts Enter on empty editor to trigger manual retry. Consumes the keypress so it doesn't reach the editor.
+pi commits the entry (making the context end on a user-role message so `canContinue` holds), then runs one more turn. The trigger text is model-visible — an honest instruction rather than a hidden message that needs filtering. The failed assistant message is stripped from model context by pi's own `transform-messages`, so the model restarts from the last user prompt.
 
-4. **`/retry` command** — Explicit retry for when you want to be deliberate about it.
+Optional exponential backoff can be restored by uncommenting one line in `index.ts` (ESC still cancels the wait).
 
-5. **`turn_end` event** — Resets the retry counter when a successful response comes through.
+## Notes
+
+- `e.outcome === "aborted"` marks the last response as retryable for manual retry only — user cancels are never auto-retried.
+- No logging; add `appendFileSync` in the `agent_before_settle` handler if you need a record.
