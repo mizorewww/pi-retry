@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
 /**
  * pi-retry: auto-retry transient "aborted" streaming errors + manual retry.
@@ -11,22 +11,25 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
  * The trigger is an honest model-facing instruction (hidden from the TUI via
  * `display: false`), so no context cleanup is needed. Errored/aborted assistant
  * messages are stripped from model context by pi's own transform-messages, so
- * the retry resumes from the last user prompt.
+ * from the model's view the last user prompt is simply still unanswered.
+ *
+ * Manual retry (/retry, alt+r) triggers the same turn whenever the session is
+ * idle and has a user prompt — including restored sessions and completed
+ * turns — so it always re-sends the last request upstream rather than
+ * depending on in-memory failure state.
  */
 
 const MAX_RETRIES = 3;
 const TRIGGER = {
   customType: "pi-retry",
-  content: "The previous response was aborted. Please try again.",
+  content: "Please answer the last request again.",
   display: false,
 };
 
 export default function (pi: ExtensionAPI) {
   let attempt = 0;
-  let failed = false;
 
   pi.on("agent_before_settle", async (e, ctx) => {
-    failed = e.outcome !== "completed";
     if (e.outcome !== "error") {
       attempt = 0;
       return;
@@ -51,28 +54,36 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", () => {
     attempt = 0;
-    failed = false;
   });
 
-  const manual = () => {
-    failed = false;
+  // Manual retry just runs a fresh turn on the current context: pi strips
+  // errored/aborted assistant entries, so the model re-answers the last user
+  // prompt — i.e. the request is sent upstream again. This works on errored,
+  // aborted AND completed turns, including sessions restored from disk where
+  // no in-memory failure state exists.
+  const hasRequest = (ctx: ExtensionContext) =>
+    ctx.sessionManager
+      .getEntries()
+      .some((e) => e.type === "message" && e.message.role === "user");
+
+  const manual = (ctx: ExtensionContext, notify: boolean) => {
+    if (!ctx.isIdle()) return;
+    if (!hasRequest(ctx)) {
+      if (notify) ctx.ui.notify("Nothing to retry.", "warning");
+      return;
+    }
     pi.sendMessage(TRIGGER, { triggerTurn: true });
   };
 
   pi.registerCommand("retry", {
-    description: "Retry the last prompt (after an errored or aborted response)",
-    handler: async (_args, ctx) => {
-      if (ctx.isIdle() && failed) manual();
-      else ctx.ui.notify("Nothing to retry.", "warning");
-    },
+    description: "Send the last request again",
+    handler: async (_args, ctx) => manual(ctx, true),
   });
 
   // registerShortcut only fires while the default editor handles input, so
   // modal/selector dialogs are unaffected — no focus detection needed.
   pi.registerShortcut("alt+r", {
-    description: "Retry the last prompt",
-    handler: (ctx) => {
-      if (ctx.isIdle() && failed) manual();
-    },
+    description: "Send the last request again",
+    handler: (ctx) => manual(ctx, false),
   });
 }
